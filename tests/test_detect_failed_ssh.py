@@ -1,10 +1,10 @@
 import sys
 from pathlib import Path
 
-sys.path.append(str(Path.home() / "security-lab" / "scripts"))
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.append(str(PROJECT_ROOT / "scripts"))
 
 from detect_failed_ssh import detect_failed_logins
-
 
 SAMPLE_LOG = """
 Oct 04 13:33:01 security-server sshd[1001]: Failed password for invalid user fakeuser from 192.168.56.3 port 50123 ssh2
