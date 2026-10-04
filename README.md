@@ -1,6 +1,6 @@
 # Security Engineering Home Lab
 
-A small virtualized security lab built to practice attacker/defender workflows, network reconnaissance, Linux telemetry analysis, and Python-based detection engineering.
+A virtualized security lab built to practice attacker/defender workflows, network reconnaissance, Linux telemetry analysis, firewall monitoring, Python-based detection engineering, and automated validation.
 
 ## Architecture
 
@@ -11,6 +11,7 @@ The lab uses two virtual machines connected through an isolated VirtualBox host-
   - Docker
   - OWASP Juice Shop on port `3000`
   - OpenSSH on port `22`
+  - UFW firewall with logging enabled
 
 - **attacker** — Ubuntu Desktop
   - Host-only IP: `192.168.56.3`
@@ -31,11 +32,11 @@ The scan identified:
 
 - `22/tcp` — OpenSSH
 - `3000/tcp` — OWASP Juice Shop
-- Remaining scanned TCP ports closed
+- Remaining scanned TCP ports closed or filtered
 
-## Controlled SSH Attack Simulation
+## Detection 1: Repeated Failed SSH Logins
 
-Repeated failed SSH login attempts were generated from the attacker VM:
+Controlled failed SSH login attempts were generated from the attacker VM:
 
 ```bash
 ssh fakeuser@192.168.56.2
@@ -49,16 +50,7 @@ Example inspection command:
 sudo journalctl -u ssh --since "10 minutes ago"
 ```
 
-## Python Detection
-
-A Python detector was created to analyze recent SSH logs and identify repeated failed authentication attempts.
-
-The detector:
-
-1. Reads recent SSH events using `journalctl`
-2. Extracts source IP addresses from failed password events
-3. Counts failed attempts per source
-4. Generates an alert when the configured threshold is reached
+A Python detector analyzes recent SSH events, extracts source IP addresses from failed password messages, counts repeated failures, and generates an alert when the threshold is reached.
 
 Example output:
 
@@ -66,30 +58,97 @@ Example output:
 ALERT: 192.168.56.3 generated 3 failed SSH login attempts
 ```
 
-Detector location:
+Detector:
 
 ```text
 scripts/detect_failed_ssh.py
 ```
+
+## Detection 2: Port Scan Activity
+
+UFW firewall logging was enabled on the server, and a controlled Nmap scan was launched from the attacker VM:
+
+```bash
+nmap -Pn -p 1-100 192.168.56.2
+```
+
+UFW recorded the blocked connection attempts in the kernel journal.
+
+The port-scan detector parses firewall telemetry, groups destination ports by source IP, and alerts when a single source attempts connections to multiple distinct ports.
+
+Example output:
+
+```text
+ALERT: 192.168.56.3 attempted connections to 9 unique ports
+```
+
+Detector:
+
+```text
+scripts/detect_port_scan.py
+```
+
+## Automated Tests
+
+The project includes pytest coverage for both detectors.
+
+Current tests verify:
+
+- repeated SSH failures trigger an alert at the configured threshold
+- SSH activity below the threshold does not trigger an alert
+- multi-port scan activity triggers an alert at the configured threshold
+- activity below the port-scan threshold does not trigger an alert
+
+Run locally with:
+
+```bash
+python3 -m pytest -v
+```
+
+Current result:
+
+```text
+4 passed
+```
+
+## GitHub Actions CI
+
+A GitHub Actions workflow runs the pytest suite automatically on pushes and pull requests.
+
+Workflow:
+
+```text
+.github/workflows/tests.yml
+```
+
+This provides continuous validation of the detection logic and helps catch regressions when the code changes.
 
 ## Current Workflow
 
 ```text
 Attacker VM
     |
-    | Nmap / failed SSH logins
-    v
-Ubuntu Security Server
+    |-- Failed SSH logins --------------------.
+    |                                         |
+    |                                         v
+    |                                  SSH system journal
+    |                                         |
+    |                                         v
+    |                              detect_failed_ssh.py
+    |                                         |
+    |                                         v
+    |                                      ALERT
     |
-    | SSH telemetry
-    v
-systemd journal
-    |
-    v
-Python detector
-    |
-    v
-Alert on repeated authentication failures
+    |-- Nmap port scan -----------------------.
+                                              |
+                                              v
+                                       UFW/kernel logs
+                                              |
+                                              v
+                                    detect_port_scan.py
+                                              |
+                                              v
+                                           ALERT
 ```
 
 ## Skills Demonstrated
@@ -98,18 +157,23 @@ Alert on repeated authentication failures
 - Linux server administration
 - Docker
 - OWASP Juice Shop
-- Network reconnaissance with Nmap
+- Nmap reconnaissance
+- UFW firewall configuration and telemetry
 - SSH authentication telemetry
 - Detection engineering
 - Python automation
+- Pytest
+- GitHub Actions CI
 - Attacker/defender workflow analysis
 
 ## Next Steps
 
 Planned improvements include:
 
-- Unit tests for the detector
-- Additional detections for reconnaissance and web activity
-- Container and dependency scanning
-- CI/CD integration
+- additional detections for suspicious web activity
+- container and dependency scanning
+- static analysis of the Python detection code
+- richer test fixtures and edge cases
 - SIEM/XDR integration such as Wazuh
+- expanded documentation and architecture diagrams
+
